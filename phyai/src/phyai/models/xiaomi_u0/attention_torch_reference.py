@@ -22,6 +22,7 @@ class UNISTorchReferencePlan(PagedAttnPlanHandle):
     """One single-sequence plan; the runner owns its KV storage."""
 
     metadata: PagedAttnMetadata
+    contiguous_kv_start: int | None = None
 
 
 class UNISTorchReferenceBackend(PagedAttentionBackend):
@@ -70,7 +71,13 @@ class UNISTorchReferenceBackend(PagedAttentionBackend):
         visible_suffix = meta.paged_kv_indices[-meta.num_query_tokens :]
         if not torch.equal(visible_suffix.to(torch.int64), meta.write_indices):
             raise ValueError("Current write slots must match the visible KV suffix.")
-        return UNISTorchReferencePlan(metadata=meta)
+        # Resolve the physical range once per plan, rather than per layer.
+        slots = meta.paged_kv_indices.detach().cpu().tolist()
+        contiguous = slots == list(range(slots[0], slots[0] + length))
+        return UNISTorchReferencePlan(
+            metadata=meta,
+            contiguous_kv_start=slots[0] if contiguous else None,
+        )
 
     def forward(
         self,
@@ -103,9 +110,17 @@ class UNISTorchReferenceBackend(PagedAttentionBackend):
                 "Current K/V shape does not match the planned heads and tokens."
             )
         ctx.kv_pool.write_kv(layer.layer_id, ctx.write_indices, k, v)
-        cached_k, cached_v = ctx.kv_pool.gather_kv(
-            layer.layer_id, meta.paged_kv_indices.to(torch.int64)
-        )
+        start = ctx.plan.contiguous_kv_start
+        if start is None:
+            cached_k, cached_v = ctx.kv_pool.gather_kv(
+                layer.layer_id, meta.paged_kv_indices.to(torch.int64)
+            )
+        else:
+            length = meta.paged_kv_indices.numel()
+            if start < 0 or start + length > ctx.kv_pool.num_slots:
+                raise ValueError("Visible KV range is outside the cache pool.")
+            cached_k = ctx.kv_pool.k_buffer(layer.layer_id)[start : start + length, 0]
+            cached_v = ctx.kv_pool.v_buffer(layer.layer_id)[start : start + length, 0]
         groups = layer.num_heads // layer.num_kv_heads
         query = q.transpose(0, 1).unsqueeze(0)
         keys = cached_k.transpose(0, 1).unsqueeze(0).repeat_interleave(groups, dim=1)
