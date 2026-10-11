@@ -57,9 +57,9 @@ The following assumes an existing validated virtual environment, compatible NVID
 
 ```bash
 REPO="$PWD"
-ENV_DIR=/mnt/user-ssd/lhy/u0_phyai_env
-AR_WEIGHTS=/mnt/user-ssd/lhy/u0_weights/Xiaomi-Robotics-U0-4B
-VISION_WEIGHTS=/mnt/user-ssd/lhy/u0_weights/Emu3.5-VisionTokenizer
+ENV_DIR=/path/to/u0_environment
+AR_WEIGHTS=/path/to/Xiaomi-Robotics-U0-4B
+VISION_WEIGHTS=/path/to/Emu3.5-VisionTokenizer
 OUTPUT="$PWD/outputs/u0-$(date +%Y%m%d-%H%M%S)"
 mkdir -p "$OUTPUT"
 set -o pipefail
