@@ -14,13 +14,14 @@ FlashInfer generation quality, multiple GPUs, concurrent requests, other resolut
 
 ## Dependencies and checkpoints
 
-Use the repository's PhyAI runtime installation, including `phyai-kernel`, `phyai-utils-tools` and `phyai-ext`. After the runtime is installed, install the utility extra using the same Python environment:
+From the repository root, use `uv` to install the workspace, including `phyai-kernel`, `phyai-utils-tools` and `phyai-ext`, with the Xiaomi U0 extra:
 
 ```bash
-python -m pip install -e './phyai-utils-tools[xiaomi_u0]'
+uv lock
+uv sync --locked --all-packages --extra xiaomi_u0
 ```
 
-This package installation resolves repository-pinned dependencies. On a provisioned Thor environment with locked versions, review the resolution before changing the runtime. The model-specific extra requires `tiktoken>=0.7,<1`.
+`uv lock` creates or updates the shared `uv.lock`; review any changes before syncing. `--all-packages` applies `--extra xiaomi_u0` to workspace members, including `phyai-utils-tools`, which declares this extra. The model-specific extra requires `tiktoken>=0.7,<1`. The sync and run commands use `--locked` to reject a missing or outdated lockfile instead of updating it implicitly. On a provisioned Thor environment, review the sync plan with `uv sync --locked --all-packages --extra xiaomi_u0 --dry-run` before changing the runtime.
 
 The U0 checkpoint directory must contain `config.json`, released safetensors weights and index, `unis.tiktoken`, and `unis_vision_tokens.txt`. The VisionTokenizer directory must contain its Hugging Face configuration, released model implementation and weights. Downloads are outside this example: all model loading uses local files.
 
@@ -28,10 +29,10 @@ Validated runtime: NVIDIA Thor (aarch64, sm_110), Python 3.12.3, Torch 2.11.0 wi
 
 ## Generate an image
 
-From the repository root, in the installed runtime environment:
+From the repository root, using the workspace environment prepared above:
 
 ```bash
-python examples/xiaomi_u0/run_xiaomi_u0.py \
+uv run --locked --all-packages --extra xiaomi_u0 python examples/xiaomi_u0/run_xiaomi_u0.py \
   --checkpoint-dir /path/to/Xiaomi-Robotics-U0-4B \
   --vision-tokenizer-dir /path/to/Emu3.5-VisionTokenizer \
   --prompt "A clean product photograph of a glass teapot beside green tea leaves, soft daylight, neutral background." \
@@ -44,7 +45,7 @@ Use a new or empty output directory. The example defaults to 5120 maximum genera
 To inspect tokenization without creating an AR engine or loading the VisionTokenizer:
 
 ```bash
-python examples/xiaomi_u0/run_xiaomi_u0.py \
+uv run --locked --all-packages --extra xiaomi_u0 python examples/xiaomi_u0/run_xiaomi_u0.py \
   --checkpoint-dir /path/to/Xiaomi-Robotics-U0-4B \
   --prompt "A compact industrial inspection camera on a brushed steel workbench, precise studio lighting." \
   --output-dir ./outputs/u0-prepare \
