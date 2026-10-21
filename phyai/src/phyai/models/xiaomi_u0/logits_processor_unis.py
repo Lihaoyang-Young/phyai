@@ -25,6 +25,8 @@ BOV = 151854
 
 
 class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcessor):
+    """Track image boundaries and unconditional histories for visual-token CFG."""
+
     def __init__(
         self,
         guidance_scale: float,
@@ -50,6 +52,12 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         cfg_min: float = 1.0,
         cfg_total_images: int = 1,
     ):
+        """Initialize CFG histories, image dimensions and guidance decay settings.
+
+        Dimension headers use token-grid units. The supplied model provides
+        unconditional logits and optional cache handles; the tokenizer encodes
+        header digits and decodes generated dimension headers.
+        """
         self.guidance_scale = guidance_scale
         self.cfg_decay = str(cfg_decay).lower()
         self.cfg_min = float(cfg_min)
@@ -137,6 +145,12 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
 
     # used only for visual tokens with classifier-free guidance
     def get_unconditional_logits(self, input_ids):
+        """Append the latest token and evaluate the unconditional CFG branch.
+
+        Cached calls forward only the newest token after the first pass.
+        The no_text_img_cfg mode returns both no-text and fully unconditional
+        logits; other modes return a single last-token logits tensor.
+        """
         # update cache
         input_ids, attention_mask = self.update_unconditional_context(
             input_ids, target="unconditional"
@@ -185,6 +199,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         return out.logits[:, -1]
 
     def __call__(self, input_ids, scores):
+        """Update image-boundary state and dispatch next-token score processing."""
         # IMAGE MODE
         if input_ids[0][-1] == BOI:
             self.set_unconditional_context(input_ids)
@@ -205,6 +220,11 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         return scores
 
     def in_image_logits_processor(self, input_ids, scores):
+        """Advance the unconditional cache and constrain image-generation scores.
+
+        Force dimension headers and image delimiters where required. Apply CFG
+        to visual-code scores and mask tokens outside the visual vocabulary.
+        """
         # all visual-related logits must call get_unconditional_logits to keep unconditional cache updated
         unc_scores = self.get_unconditional_logits(input_ids)
 
@@ -304,6 +324,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
                         return scores
 
     def in_text_logits_processor(self, input_ids, scores):
+        """Mask visual-code IDs during text generation without applying CFG."""
         # for text tokens, do not apply CFG here
         mask = torch.full_like(scores, -math.inf)
         mask[:, :BOV] = 0
@@ -311,6 +332,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         return scores
 
     def parse_hw(self, input_ids):
+        """Decode and retain grid dimensions between the latest BOI and IMG tokens."""
         if (
             self.height is not None
             and self.width is not None
@@ -341,6 +363,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         )
 
     def allowed_auto_hw_tokens(self, input_ids):
+        """Return allowed digit or delimiter IDs for the current dimension header."""
         boi_idx = self.find_last_token_index(input_ids[0], BOI)
         hw_tokens = input_ids[0, boi_idx + 1 :].tolist()
 
@@ -361,6 +384,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         return [IMG]
 
     def find_last_token_index(self, seq, token_id):
+        """Return the last matching token position, or -1 when the token is absent."""
         # seq shape: (N,)
         token_indices = (seq == token_id).nonzero().flatten()
         if len(token_indices) == 0:
@@ -368,12 +392,14 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         return token_indices[-1].item()
 
     def find_first_token_index(self, seq, token_id):
+        """Return the first matching token position, or -1 when the token is absent."""
         token_indices = (seq == token_id).nonzero().flatten()
         if len(token_indices) == 0:
             return -1
         return token_indices[0].item()
 
     def apply_cfg(self, scores, unc_scores, cfg_scale, img_cfg_scale):
+        """Combine log probabilities using no-text or two-branch image guidance."""
         match self.unconditional_type:
             case "no_text":
                 # applying no_text CFG
@@ -401,6 +427,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
                 )
 
     def current_guidance_scale(self):
+        """Return guidance at the current image index using the configured decay."""
         if self.cfg_decay in {"", "none"}:
             return self.guidance_scale
 
@@ -421,6 +448,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
         raise ValueError(f"Unsupported cfg_decay {self.cfg_decay!r}")
 
     def set_unconditional_context(self, input_ids):
+        """Enter image mode and reset the fully unconditional history when needed."""
         self.in_image = True
 
         if (
@@ -444,6 +472,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
             )
 
     def update_unconditional_context(self, input_ids, target="unconditional"):
+        """Append the latest token and its attention-mask entry to the chosen history."""
         if target == "unconditional":
             self.unconditional_context["input_ids"] = torch.cat(
                 [
@@ -482,6 +511,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenProcessor(LogitsProcess
             ], self.full_unconditional_context["attention_mask"]
 
     def exit_image(self, input_ids):
+        """Leave image mode and forward EOI through the unconditional branch."""
         self.in_image = False
         self.in_visual = False
         # update eoi to unconditional cache
@@ -522,6 +552,7 @@ class UnbatchedClassifierFreeGuidanceLogitsForVisualTokenWithDifferentialTopKPro
         image_temperature: float = 1.0,
         **kwargs,
     ):
+        """Initialize CFG with separate text and image sampling parameters."""
         super().__init__(
             guidance_scale=guidance_scale,
             model=model,

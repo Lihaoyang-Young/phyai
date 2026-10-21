@@ -24,6 +24,7 @@ class UNISRMSNorm(RMSNorm):
         x: torch.Tensor,
         residual: torch.Tensor | None = None,
     ) -> torch.Tensor:
+        """Normalize in FP32, cast back before weight multiplication and reject fused residuals."""
         if residual is not None:
             raise ValueError("UNIS requires explicit residual addition.")
         promoted = x.float()
@@ -46,6 +47,7 @@ class UNISAttention(nn.Module):
         attention_backend: str | None = None,
         rope_backend: str | None = None,
     ) -> None:
+        """Build attention projections, per-head Q/K norms and positional embeddings."""
         super().__init__()
         self.num_heads = config.num_attention_heads
         self.num_kv_heads = config.num_key_value_heads
@@ -121,6 +123,7 @@ class UNISAttention(nn.Module):
         position_ids: torch.Tensor,
         ctx: PagedAttnCtx | None = None,
     ) -> torch.Tensor:
+        """Apply normalized rotary Q/K attention, using the supplied paged context if present."""
         batch, length, _ = x.shape
         if ctx is not None and batch != 1:
             raise ValueError("Initial paged UNIS supports one sequence only.")
@@ -157,6 +160,7 @@ class UNISMLP(nn.Module):
         device: torch.device | str,
         prefix: str,
     ) -> None:
+        """Create the bias-free gate, expansion and output projections."""
         super().__init__()
         for name, input_size, output_size in (
             ("gate_proj", config.hidden_size, config.intermediate_size),
@@ -177,6 +181,7 @@ class UNISMLP(nn.Module):
             )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
+        """Return the down projection of SiLU(gate(x)) multiplied by up(x)."""
         gate, _ = self.gate_proj(x)
         up, _ = self.up_proj(x)
         output, _ = self.down_proj(F.silu(gate) * up)
@@ -196,6 +201,7 @@ class UNISDecoderLayer(nn.Module):
         attention_backend: str | None = None,
         rope_backend: str | None = None,
     ) -> None:
+        """Build one indexed decoder layer with separate attention and MLP norms."""
         super().__init__()
         if not 0 <= layer_idx < config.num_hidden_layers:
             raise ValueError("layer_idx is outside the configured layer range.")
@@ -237,6 +243,7 @@ class UNISDecoderLayer(nn.Module):
         position_ids: torch.Tensor,
         ctx: PagedAttnCtx | None = None,
     ) -> torch.Tensor:
+        """Run the decoder in eval mode with explicit attention and MLP residual additions."""
         if self.training:
             raise RuntimeError("UNISDecoderLayer currently supports eval mode only.")
         if hidden_states.ndim != 3 or hidden_states.shape[-1] != self.hidden_size:

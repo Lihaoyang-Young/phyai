@@ -38,6 +38,7 @@ class UNISConfig(PretrainedConfig):
     eof_token_id: int = 151847
 
     def __post_init__(self) -> None:
+        """Reject invalid dimensions, token IDs and unsupported architecture options."""
         for name in (
             "vocab_size",
             "hidden_size",
@@ -87,6 +88,7 @@ class UNISConfig(PretrainedConfig):
 
     @property
     def num_key_value_groups(self) -> int:
+        """Return the number of query heads sharing each key/value head."""
         return self.num_attention_heads // self.num_key_value_heads
 
 

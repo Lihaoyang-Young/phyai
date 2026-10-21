@@ -37,6 +37,7 @@ class UNISModelRunner(ModelRunner):
         capacity: int,
         paged_backend: str = "flashinfer",
     ) -> None:
+        """Validate cache capacity and record the model device and attention backend."""
         if capacity <= 0 or capacity > model.model.max_position_embeddings:
             raise ValueError("capacity must be within the configured position range.")
         if paged_backend not in {"flashinfer", "torch_reference"}:
@@ -53,6 +54,7 @@ class UNISModelRunner(ModelRunner):
         self._plan: PagedAttnPlanHandle | None = None
 
     def setup(self) -> None:
+        """Allocate a page-size-one KV pool and initialize the selected attention backend."""
         if self.kv_pool is not None:
             raise RuntimeError("Runner is already set up.")
         proto = self.model.model.layers[0].self_attn.paged_attention
@@ -118,6 +120,7 @@ class UNISModelRunner(ModelRunner):
         self.attn_backend = backend
 
     def plan_inference(self, meta: PagedAttnMetadata) -> None:
+        """Validate scheduler metadata and retain a backend plan for one forward call."""
         if self.attn_backend is None:
             raise RuntimeError("Call setup before planning.")
         if meta.batch_size != 1 or meta.layout != AttnLayout.RAGGED_3D:
@@ -140,6 +143,11 @@ class UNISModelRunner(ModelRunner):
         self._meta = meta
 
     def forward(self, batch: UNISForwardBatch) -> torch.Tensor:
+        """Validate the batch against the pending plan and return vocabulary logits.
+
+        The plan is consumed before model execution, including when execution
+        fails, so a subsequent forward must receive fresh metadata.
+        """
         if self._meta is None or self._plan is None:
             raise RuntimeError("Plan this step before forward.")
         if self.kv_pool is None or self.attn_backend is None:
@@ -177,6 +185,7 @@ class UNISModelRunner(ModelRunner):
         self._plan = None
 
     def close(self) -> None:
+        """Discard pending metadata and release the backend and KV pool references."""
         self._meta = None
         self._plan = None
         self.attn_backend = None

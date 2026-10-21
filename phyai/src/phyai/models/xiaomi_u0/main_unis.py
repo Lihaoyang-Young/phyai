@@ -38,10 +38,16 @@ class UNISEntry(Entry):
     args_cls: ClassVar[type[EntryArgs]] = UNISArgs
 
     def __init__(self) -> None:
+        """Create an entry with no model or scheduler allocated."""
         self.model: UNISForCausalLM | None = None
         self.scheduler: UNISGenerationScheduler | None = None
 
     def setup(self, args: UNISArgs) -> None:
+        """Load local BF16 weights and initialize generation on the configured CUDA device.
+
+        Reject CUDA Graph execution and checkpoint precision casts. Release
+        partially initialized resources if model loading or scheduler setup fails.
+        """
         if self.model is not None:
             raise RuntimeError("The U0 entry is already set up.")
         if not args.checkpoint_dir:
@@ -80,17 +86,20 @@ class UNISEntry(Entry):
             raise
 
     def step(self, request: UNISGenerationRequest) -> UNISGenerationResult:
+        """Generate tokens through the scheduler after successful setup."""
         if self.scheduler is None:
             raise RuntimeError("Call U0 entry setup before generation.")
         return self.scheduler.step(request)
 
     def close(self) -> None:
+        """Release scheduler resources and clear the loaded model reference."""
         if self.scheduler is not None:
             self.scheduler.close()
         self.scheduler = None
         self.model = None
 
     def dump_targets(self) -> dict[str, torch.nn.Module]:
+        """Return the loaded model for engine inspection, or an empty mapping."""
         return {} if self.model is None else {"model": self.model}
 
 

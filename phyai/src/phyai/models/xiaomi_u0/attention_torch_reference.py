@@ -36,9 +36,16 @@ class UNISTorchReferenceBackend(PagedAttentionBackend):
     name = "torch_reference"
 
     def supports_capture(self) -> bool:
+        """Return False because this reference backend does not support graph capture."""
         return False
 
     def init_forward_metadata(self, meta: PagedAttnMetadata) -> PagedAttnPlanHandle:
+        """Validate a single-sequence KV suffix and plan its visible cache slots.
+
+        Cache writes must correspond to the absolute positions at the end of
+        the visible sequence. Contiguous physical slots are recorded for direct
+        buffer access during attention.
+        """
         if meta.batch_size != 1 or meta.layout != AttnLayout.RAGGED_3D:
             raise ValueError("UNIS reference attention requires one ragged sequence.")
         if meta.num_query_tokens <= 0:
@@ -87,6 +94,12 @@ class UNISTorchReferenceBackend(PagedAttentionBackend):
         v: torch.Tensor,
         ctx: PagedAttnCtx,
     ) -> torch.Tensor:
+        """Write current K/V and return causal attention in query-head layout.
+
+        Q/K/V must be BF16, with shape (tokens, heads, head_dim), and the KV
+        pool must use one token per page. Score and probability casts preserve
+        the reference implementation's rounding boundaries.
+        """
         if not isinstance(ctx.plan, UNISTorchReferencePlan):
             raise TypeError("UNIS reference attention requires its own plan handle.")
         if ctx.kv_pool.page_size != 1 or not layer.causal:

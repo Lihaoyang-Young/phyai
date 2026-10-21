@@ -20,6 +20,7 @@ class U0TextProcessor:
     """Read local vocabularies without executing checkpoint Python code."""
 
     def __init__(self, checkpoint_dir: str | Path) -> None:
+        """Load local vocabulary files and validate the released U0 token layout."""
         import tiktoken
 
         root = Path(checkpoint_dir)

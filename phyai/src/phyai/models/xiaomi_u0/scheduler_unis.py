@@ -27,6 +27,7 @@ class _HeaderTokenizer:
     """Only the tokenizer operations used by the fixed 64-by-64 processor."""
 
     def __init__(self, mapping: dict[str, list[int]]) -> None:
+        """Validate and copy the released fixed-grid digit and delimiter mappings."""
         expected = {
             **{str(index): [15 + index] for index in range(10)},
             "*": [9],
@@ -43,11 +44,13 @@ class _HeaderTokenizer:
         self.mapping = {key: values.copy() for key, values in expected.items()}
 
     def encode(self, text: str, add_special_tokens: bool = False) -> list[int]:
+        """Return a copy of a known header encoding without adding special tokens."""
         if add_special_tokens:
             raise ValueError("The U0 header does not add special tokens.")
         return self.mapping[text].copy()
 
     def decode(self, tokens: list[int] | torch.Tensor) -> str:
+        """Return the unique header string matching the supplied token sequence."""
         values = tokens.tolist() if isinstance(tokens, torch.Tensor) else list(tokens)
         matches = [key for key, ids in self.mapping.items() if ids == values]
         if len(matches) != 1:
@@ -64,7 +67,10 @@ def _seed_request(device: torch.device, seed: int) -> None:
 
 
 def _metadata(start: int, end: int, device: torch.device) -> PagedAttnMetadata:
+    """Describe a contiguous prefill or decode suffix with absolute cache positions."""
+
     def ints(values: list[int]) -> torch.Tensor:
+        """Create an int32 metadata tensor on the requested device."""
         return torch.tensor(values, device=device, dtype=torch.int32)
 
     return PagedAttnMetadata(
@@ -84,8 +90,11 @@ def _metadata(start: int, end: int, device: torch.device) -> PagedAttnMetadata:
 
 
 class _Output(dict):
+    """Expose branch logits and a cache handle through a dictionary-compatible result."""
+
     @property
     def logits(self) -> torch.Tensor:
+        """Return the logits tensor stored in the branch result."""
         return self["logits"]
 
 
@@ -93,11 +102,13 @@ class _Branch:
     """Bridge the official processor to a runner-owned cache."""
 
     def __init__(self, runner: UNISModelRunner) -> None:
+        """Associate a runner with an empty token history and no cached logits."""
         self.runner = runner
         self.history: torch.Tensor | None = None
         self.last_logits: torch.Tensor | None = None
 
     def forward(self, ids: torch.Tensor) -> torch.Tensor:
+        """Append query tokens, plan their cache writes and return copied last-token logits."""
         start = 0 if self.history is None else self.history.shape[1]
         self.history = (
             ids.clone() if start == 0 else torch.cat((self.history, ids), dim=1)
@@ -117,6 +128,7 @@ class _Branch:
         use_cache: bool,
         past_key_values: Any,
     ) -> _Output:
+        """Serve an unpadded cached model call using this branch as the cache handle."""
         if not use_cache or not torch.all(attention_mask == 1).item():
             raise ValueError("U0 supports unpadded cached unconditional input only.")
         if self.history is None:
@@ -147,6 +159,7 @@ class UNISGenerationScheduler(Scheduler):
         tokenizer_mapping: dict[str, list[int]],
         paged_backend: str = "torch_reference",
     ) -> None:
+        """Validate header mappings and create runners for two independent CFG caches."""
         self.model = model
         self.capacity = capacity
         self.tokenizer = _HeaderTokenizer(tokenizer_mapping)
@@ -157,6 +170,7 @@ class UNISGenerationScheduler(Scheduler):
         self._ready = False
 
     def setup(self) -> None:
+        """Set up both runners, releasing their resources if either setup fails."""
         if self._ready:
             raise RuntimeError("The U0 scheduler is already set up.")
         try:
@@ -169,6 +183,13 @@ class UNISGenerationScheduler(Scheduler):
 
     @torch.inference_mode()
     def step(self, request: UNISGenerationRequest) -> UNISGenerationResult:
+        """Reset branch caches and generate one fixed-grid request until EOS or the limit.
+
+        Sampling uses a forked CPU/CUDA RNG state seeded for this request.
+        Regression replay substitutes supplied tokens for sampling and marks
+        the result accordingly. Returned CPU IDs exclude the prompt; the final
+        sampled or replayed token is not fed back for another model forward.
+        """
         if not self._ready:
             raise RuntimeError("Call setup before U0 generation.")
         if not isinstance(request, UNISGenerationRequest):
@@ -284,6 +305,7 @@ class UNISGenerationScheduler(Scheduler):
         )
 
     def close(self) -> None:
+        """Close both runners and mark the scheduler as requiring setup."""
         for runner in self.runners:
             runner.close()
         self._ready = False

@@ -27,6 +27,7 @@ class UNISModel(nn.Module):
         attention_backend: str | None = None,
         rope_backend: str | None = None,
     ) -> None:
+        """Build the single-rank token embedding, decoder stack and final RMS norm."""
         super().__init__()
         if default_mesh().replica_world_size != 1:
             raise ValueError("The initial UNIS implementation requires one rank.")
@@ -66,6 +67,12 @@ class UNISModel(nn.Module):
         position_ids: torch.Tensor | None = None,
         ctx: PagedAttnCtx | None = None,
     ) -> torch.Tensor:
+        """Return normalized hidden states for a nonempty batch of integer token IDs.
+
+        Without a paged context, positions default to a sequence starting at
+        zero. Paged execution requires one sequence and explicit absolute
+        positions matching the current cache writes.
+        """
         if self.training:
             raise RuntimeError("UNISModel currently supports eval mode only.")
         if input_ids.ndim != 2 or input_ids.shape[1] == 0:
@@ -112,6 +119,7 @@ class UNISForCausalLM(nn.Module):
         rope_backend: str | None = None,
         lm_head_backend: str | None = "torch",
     ) -> None:
+        """Build the UNIS backbone and a separate vocabulary head with a local GEMM preference."""
         super().__init__()
         self.model = UNISModel(
             config,
@@ -142,6 +150,7 @@ class UNISForCausalLM(nn.Module):
         position_ids: torch.Tensor | None = None,
         ctx: PagedAttnCtx | None = None,
     ) -> torch.Tensor:
+        """Project backbone states to vocabulary logits and return them in FP32."""
         hidden_states = self.model(input_ids, position_ids, ctx)
         logits, _ = self.lm_head(hidden_states)
         return logits.float()
