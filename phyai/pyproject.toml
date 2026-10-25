@@ -4,6 +4,8 @@ dynamic = ["version"]
 description = "phyai — Physical AI. Main library."
 requires-python = ">=3.12"
 dependencies = [
+    "phyai-ext",
+    "phyai-gateway",
     "phyai-kernel",
     "phyai-utils-tools",
     "numpy",
@@ -14,18 +16,19 @@ dependencies = [
     "flash-linear-attention>=0.5.1",
     "transformers==5.8.1",
     "huggingface-hub",
+    "gradio>=6.30.0,<7",
     "tqdm",
     "pyyaml",
     "setproctitle",
     "flash-qla",
     "nvidia-ml-py",
+    "humming-kernels==0.1.16",
 ]
 
 [project.scripts]
 phyai = "phyai.cli:main"
 
 [project.optional-dependencies]
-ext = ["phyai-ext"]
 fastokenizer = ["fastokens>=0.2.0"]
 
 [build-system]
@@ -42,3 +45,4 @@ packages = ["src/phyai"]
 [tool.uv.sources]
 phyai-kernel = { workspace = true }
 phyai-ext = { workspace = true }
+phyai-gateway = { workspace = true }
