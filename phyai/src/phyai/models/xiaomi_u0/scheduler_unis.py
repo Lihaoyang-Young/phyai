@@ -9,6 +9,8 @@ import torch
 from phyai.layers.attention.enums import AttnLayout, AttnMode
 from phyai.layers.attention.paged.base import PagedAttnMetadata
 from phyai.models.xiaomi_u0.logits_processor_unis import (
+    EOI,
+    EOS,
     UnbatchedClassifierFreeGuidanceLogitsForVisualTokenWithDifferentialTopKProcessor,
 )
 from phyai.models.xiaomi_u0.model_runner_unis import UNISForwardBatch, UNISModelRunner
@@ -21,6 +23,27 @@ from phyai.runtime.schedule import Scheduler
 from phyai.utils import get_logger
 
 logger = get_logger(__name__)
+
+_IMAGE_TOKEN_COUNT = 4169
+_IMAGE_TRAILER = (EOI, 151747)
+
+
+def _image_trailer_ready(generated: list[int]) -> bool:
+    """Allow EOS only at the final position after a generated EOI and ESS."""
+    return (
+        len(generated) == _IMAGE_TOKEN_COUNT - 1
+        and tuple(generated[-2:]) == _IMAGE_TRAILER
+    )
+
+
+def _image_sampling_scores(
+    processed_scores: torch.Tensor, generated: list[int]
+) -> torch.Tensor:
+    """Constrain fixed-image EOS without changing reference processor scores."""
+    scores = processed_scores.clone()
+    if not _image_trailer_ready(generated):
+        scores[:, EOS] = -torch.inf
+    return scores
 
 
 class _HeaderTokenizer:
@@ -189,6 +212,8 @@ class UNISGenerationScheduler(Scheduler):
         Regression replay substitutes supplied tokens for sampling and marks
         the result accordingly. Returned CPU IDs exclude the prompt; the final
         sampled or replayed token is not fed back for another model forward.
+        EOS requires the complete generated image trailer. Captured processor
+        scores remain distinct from constrained sampling scores.
         """
         if not self._ready:
             raise RuntimeError("Call setup before U0 generation.")
@@ -266,6 +291,17 @@ class UNISGenerationScheduler(Scheduler):
                     raise RuntimeError(
                         "The U0 processor produced invalid sampling scores."
                     )
+                sampling_scores = None
+                if replay is None:
+                    sampling_scores = _image_sampling_scores(scores, generated)
+                    cutoff = sampling_scores.topk(131072, dim=-1).values[:, -1:]
+                    sampling_scores = sampling_scores.masked_fill(
+                        sampling_scores < cutoff, -torch.inf
+                    )
+                    if not torch.isfinite(sampling_scores).any().item():
+                        raise RuntimeError(
+                            "No eligible U0 sampling token remains before image completion."
+                        )
                 if step in request.capture_steps:
                     traces.append(
                         {
@@ -277,20 +313,29 @@ class UNISGenerationScheduler(Scheduler):
                                 else unconditional.last_logits.detach().cpu()
                             ),
                             "processed_scores": scores.detach().cpu().clone(),
+                            "sampling_scores": (
+                                None
+                                if sampling_scores is None
+                                else sampling_scores.detach().cpu().clone()
+                            ),
                         }
                     )
                 if replay is None:
-                    cutoff = scores.topk(131072, dim=-1).values[:, -1:]
-                    scores = scores.masked_fill(scores < cutoff, -torch.inf)
-                    query = torch.multinomial(scores.softmax(-1), num_samples=1)
+                    query = torch.multinomial(
+                        sampling_scores.softmax(-1), num_samples=1
+                    )
                 else:
                     # Teacher forcing diagnoses numerical correctness; it is not sampling.
                     query = replay[step : step + 1].to(device).reshape(1, 1)
                 token = int(query.item())
+                if token == EOS and not _image_trailer_ready(generated):
+                    raise ValueError(
+                        "EOS requires the complete fixed-image EOI and ESS trailer."
+                    )
                 generated.append(token)
                 if step % 64 == 0:
                     logger.info("U0 generation tokens=%d", len(generated))
-                if token == 151850:
+                if token == EOS:
                     reason = "eos"
                     break
         return UNISGenerationResult(
