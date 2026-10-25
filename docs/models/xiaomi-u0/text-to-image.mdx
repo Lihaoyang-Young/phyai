@@ -113,20 +113,6 @@ Run with CUDA Graph disabled. Concurrent requests, other image sizes and video a
 
 ## Validation
 
-The GPU checks ran on NVIDIA Thor with Torch 2.11.0, CUDA 13.0 and a 512 MiB FlashInfer workspace.
-Each of the three prompts above sampled EOS, produced a complete 4169-token stream and decoded to a 1024 × 1024 RGB image.
-
-An 81-prediction replay used a fixed token history. Its 6279 activation comparisons passed cosine similarity `>=0.99` and relative L2 error `<=0.05`.
-At the first visual prediction (step 7), comparison with an independent BF16 reference gave:
-
-| Logits | Cosine similarity | Relative L2 error |
-| --- | --- | --- |
-| Conditional | 0.9999767 | 0.0071404 |
-| Unconditional | 0.9998077 | 0.0199978 |
-
-Both branches had the same top-1 token as the reference. Sampling-distribution TV at this prediction was `0.03753`.
-
-The decoder comparison used one saved code grid. All 297 compared parameters matched the reference, and 15 selected boundaries passed `atol=1e-3, rtol=1e-4`.
-Final FP32 pixels passed the same tolerance with mean absolute error `<=1e-5`; the maximum 8-bit pixel difference was `<=1`.
-
-All 15 CPU tests passed, including 62 reduced-decoder outputs. The numerical comparisons cover the fixed history and saved code grid described here.
+On NVIDIA Thor, all three prompts above completed with FlashInfer and the native PhyAI decoder, returning EOS, 4169 output tokens and a 1024 × 1024 RGB image.
+A short fixed-history AR replay and a decoder comparison using one saved code grid passed their respective approximation checks.
+See [PR #71](https://github.com/mingti-org/phyai/pull/71) for the comparison methods and numerical results.
