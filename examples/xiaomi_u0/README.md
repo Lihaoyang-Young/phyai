@@ -81,4 +81,4 @@ Each request generates one image from a fixed 64 × 64 code grid, using no-text 
 
 On Thor, the native decoder passed a numerical comparison with the released decoder for one saved code grid. Each of the three prompts above produced a 1024 × 1024 image with seed 42, using FlashInfer and the native decoder.
 
-See the [full guide](../../docs/models/xiaomi-u0/text-to-image.mdx#scope-and-validation) for the comparison methods and tested scope.
+See the [full guide](../../docs/models/xiaomi-u0/text-to-image.mdx#validation) for a validation summary and links to the comparison results.

@@ -27,7 +27,7 @@ def main() -> None:
     parser.add_argument("--prompt", required=True)
     parser.add_argument("--output-dir", type=Path, required=True)
     parser.add_argument("--seed", type=int, default=42)
-    parser.add_argument("--max-new-tokens", type=int, default=5120)
+    parser.add_argument("--max-new-tokens", type=int, default=4169)
     parser.add_argument("--prepare-only", action="store_true")
     args = parser.parse_args()
     if args.max_new_tokens < 4169:

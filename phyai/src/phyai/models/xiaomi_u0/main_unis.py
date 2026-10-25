@@ -22,11 +22,15 @@ from phyai.weights.loader import load_pretrained
 
 @dataclass
 class UNISArgs(EntryArgs):
-    """Local checkpoint and fixed-grid tokenizer mapping for U0 generation."""
+    """Local checkpoint, tokenizer mapping and an explicit cache budget.
+
+    Before engine setup, set capacity to the larger conditional/unconditional
+    input length plus the request's maximum number of generated tokens.
+    """
 
     checkpoint_dir: str = ""
     tokenizer_mapping: dict[str, list[int]] = field(default_factory=dict)
-    capacity: int = 5160
+    capacity: int = field(kw_only=True)
     paged_backend: str = "flashinfer"
 
 

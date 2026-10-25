@@ -14,7 +14,7 @@ class UNISGenerationRequest:
 
     input_ids: torch.Tensor
     unconditional_ids: torch.Tensor
-    max_new_tokens: int = 5120
+    max_new_tokens: int = 4169
     seed: int = 42
     replay_ids: torch.Tensor | None = None
     capture_steps: tuple[int, ...] = ()
