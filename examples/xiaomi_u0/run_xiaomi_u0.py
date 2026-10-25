@@ -14,7 +14,7 @@ import torch
 
 from phyai_utils_tools.models.xiaomi_u0 import (
     U0TextProcessor,
-    decode_image,
+    image_from_pixels,
     visual_codes,
 )
 
@@ -53,7 +53,8 @@ def main() -> None:
         "vision_tokenizer_dir": str(args.vision_tokenizer_dir)
         if args.vision_tokenizer_dir
         else None,
-        "backend": "torch_reference",
+        "backend": "flashinfer",
+        "vision_backend": "phyai",
         "input_tokens": ids.shape[1],
         "unconditional_tokens": unc.shape[1],
         "torch": torch.__version__,
@@ -69,7 +70,7 @@ def main() -> None:
 
     from phyai.engine import EngineArgs, EngineCore
     from phyai.engine_config import EngineConfig
-    from phyai.models.xiaomi_u0 import UNISArgs, UNISGenerationRequest
+    from phyai.models.xiaomi_u0 import UNISArgs, UNISGenerationRequest, U0VisionArgs
 
     cfg = EngineConfig.from_env(base=None)
     cfg = cfg.replace(
@@ -85,7 +86,7 @@ def main() -> None:
                 checkpoint_dir=str(args.checkpoint_dir),
                 tokenizer_mapping=mapping,
                 capacity=max(ids.shape[1], unc.shape[1]) + args.max_new_tokens,
-                paged_backend="torch_reference",
+                paged_backend="flashinfer",
             ),
         )
     )
@@ -120,23 +121,23 @@ def main() -> None:
     gc.collect()
     torch.cuda.empty_cache()
 
-    # This model is loaded only for image decode; the AR model stays native PhyAI.
-    from transformers import AutoModel
-
     started = time.perf_counter()
-    vision = (
-        AutoModel.from_pretrained(
-            str(args.vision_tokenizer_dir),
-            trust_remote_code=True,
-            local_files_only=True,
+    vision_cfg = cfg.replace(device=replace(cfg.device, params_dtype=torch.float32))
+    vision_core = EngineCore(
+        EngineArgs(
+            plugin="xiaomi_u0_decode",
+            config=vision_cfg,
+            plugin_args=U0VisionArgs(checkpoint_dir=str(args.vision_tokenizer_dir)),
         )
-        .float()
-        .eval()
-        .to("cuda:0")
     )
-    image = decode_image(result.generated_ids, vision)
-    image.save(args.output_dir / "image.png")
-    torch.cuda.synchronize()
+    try:
+        codes = visual_codes(result.generated_ids).unsqueeze(0)
+        pixels = vision_core.step(codes)
+        image = image_from_pixels(pixels)
+        image.save(args.output_dir / "image.png")
+        torch.cuda.synchronize()
+    finally:
+        vision_core.close()
     record["vision_load_and_decode_seconds"] = time.perf_counter() - started
     record["image_size"] = list(image.size)
     report_path.write_text(json.dumps(record, indent=2) + "\n")

@@ -22,12 +22,12 @@ from phyai.weights.loader import load_pretrained
 
 @dataclass
 class UNISArgs(EntryArgs):
-    """Local checkpoint and fixed-grid tokenizer mapping for the reference path."""
+    """Local checkpoint and fixed-grid tokenizer mapping for U0 generation."""
 
     checkpoint_dir: str = ""
     tokenizer_mapping: dict[str, list[int]] = field(default_factory=dict)
     capacity: int = 5160
-    paged_backend: str = "torch_reference"
+    paged_backend: str = "flashinfer"
 
 
 @Engine.register
@@ -65,15 +65,12 @@ class UNISEntry(Entry):
                 UNISConfig.from_json(checkpoint / "config.json"),
                 dtype=engine.device.params_dtype,
                 device=engine.device.target,
-                attention_backend="eager",
-                rope_backend="eager",
+                attention_backend="flashinfer",
                 lm_head_backend="torch",
             ).eval()
             report = load_pretrained(self.model, checkpoint, strict=True)
             if report.casts:
-                raise ValueError(
-                    "The U0 reference checkpoint must load without precision casts."
-                )
+                raise ValueError("The U0 checkpoint must load without precision casts.")
             self.scheduler = UNISGenerationScheduler(
                 self.model,
                 capacity=args.capacity,

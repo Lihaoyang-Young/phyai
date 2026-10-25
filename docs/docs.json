@@ -54,6 +54,12 @@
                   "models/cosmos/policy",
                   "models/cosmos/processors"
                 ]
+              },
+              {
+                "group": "Xiaomi U0",
+                "pages": [
+                  "models/xiaomi-u0/text-to-image"
+                ]
               }
             ]
           },
@@ -127,6 +133,12 @@
                   "zh/models/cosmos/generation",
                   "zh/models/cosmos/policy",
                   "zh/models/cosmos/processors"
+                ]
+              },
+              {
+                "group": "Xiaomi U0",
+                "pages": [
+                  "zh/models/xiaomi-u0/text-to-image"
                 ]
               }
             ]

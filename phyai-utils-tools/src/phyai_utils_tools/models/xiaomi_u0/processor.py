@@ -6,7 +6,6 @@ import base64
 import re
 from pathlib import Path
 import unicodedata
-from typing import Any
 
 import torch
 
@@ -128,21 +127,13 @@ def visual_codes(tokens: torch.Tensor) -> torch.Tensor:
     return torch.stack(rows)
 
 
-def decode_image(tokens: torch.Tensor, vision_model: Any) -> Any:
-    """Decode validated codebook IDs using the released FP32 VisionTokenizer."""
+def image_from_pixels(pixels: torch.Tensor):
+    """Convert one decoded RGB tensor in [-1, 1] to an 8-bit PIL image."""
     import numpy as np
     from PIL import Image
 
-    codes = visual_codes(tokens)
-    device = next(vision_model.parameters()).device
-    with torch.inference_mode():
-        decoded = vision_model.decode_code(
-            codes.to(device)[None], shape=(1, 64, 64, 256)
-        ).float()
-        if (
-            decoded.shape != (1, 3, 1024, 1024)
-            or not torch.isfinite(decoded).all().item()
-        ):
-            raise ValueError("VisionTokenizer returned an invalid image.")
-        pixels = ((decoded[0].permute(1, 2, 0) + 1.0) * 127.5).clamp(0, 255)
-        return Image.fromarray(pixels.cpu().numpy().astype(np.uint8))
+    if pixels.shape != (1, 3, 1024, 1024) or not torch.isfinite(pixels).all().item():
+        raise ValueError("Expected one finite 1024-by-1024 RGB image.")
+    pixels = pixels.detach().float().cpu()[0].permute(1, 2, 0)
+    pixels = ((pixels + 1.0) * 127.5).clamp(0, 255)
+    return Image.fromarray(pixels.numpy().astype(np.uint8))

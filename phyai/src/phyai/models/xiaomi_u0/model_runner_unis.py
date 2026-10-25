@@ -40,8 +40,8 @@ class UNISModelRunner(ModelRunner):
         """Validate cache capacity and record the model device and attention backend."""
         if capacity <= 0 or capacity > model.model.max_position_embeddings:
             raise ValueError("capacity must be within the configured position range.")
-        if paged_backend not in {"flashinfer", "torch_reference"}:
-            raise ValueError("paged_backend must be flashinfer or torch_reference.")
+        if paged_backend != "flashinfer":
+            raise ValueError("U0 paged attention requires the FlashInfer backend.")
         self.paged_backend = paged_backend
         self.model = model
         self.capacity = capacity
@@ -67,14 +67,6 @@ class UNISModelRunner(ModelRunner):
             device=self.device,
             page_size=1,
         )
-        if self.paged_backend == "torch_reference":
-            from phyai.models.xiaomi_u0.attention_torch_reference import (
-                UNISTorchReferenceBackend,
-            )
-
-            self.kv_pool = pool
-            self.attn_backend = UNISTorchReferenceBackend()
-            return
         backend = select_paged_backend(
             "attention_paged",
             proto,

@@ -1,0 +1,107 @@
+---
+title: "Xiaomi U0 text-to-image"
+description: "Prepare local checkpoints and generate a single image with Xiaomi U0 in PhyAI."
+---
+
+Xiaomi U0 generates image tokens from a text prompt. The example uses Xiaomi-Robotics-U0-4B to produce a 64 × 64 grid of visual codes, then runs the Emu3.5 decoder to turn those codes into a 1024 × 1024 RGB image.
+
+Both models run in PhyAI. The AR model uses BF16 parameters and FlashInfer paged attention. The image decoder uses FP32 convolutions, GroupNorm, and noncausal SDPA through the shared PhyAI attention layer. Loading reads configuration and tensors without executing checkpoint Python files.
+
+## Prepare your environment
+
+You need a CUDA GPU supported by the repository runtime and local copies of both checkpoints. Keep the repository's pinned Torch, Transformers, and FlashInfer versions when setting up the environment.
+
+The AR checkpoint must include `config.json`, the released weights, `unis.tiktoken`, and `unis_vision_tokens.txt`. The image decoder needs the configuration and weights from [BAAI/Emu3.5-VisionTokenizer](https://huggingface.co/BAAI/Emu3.5-VisionTokenizer).
+
+Run from the repository root:
+
+```bash
+uv lock
+uv sync --locked
+```
+
+The text tokenizer uses `tiktoken`, which is installed with `phyai-utils-tools`. No model-specific extra is needed. Before changing a provisioned environment, inspect the plan with `uv sync --locked --dry-run`.
+
+## Generate an image
+
+Check that the GPU has enough free memory, then run the example with your local checkpoint paths:
+
+```bash
+nvidia-smi
+PHYAI_FLASHINFER_WORKSPACE_BYTES=536870912 \
+uv run --locked python examples/xiaomi_u0/run_xiaomi_u0.py \
+  --checkpoint-dir /path/to/Xiaomi-Robotics-U0-4B \
+  --vision-tokenizer-dir /path/to/Emu3.5-VisionTokenizer \
+  --prompt "A studio photograph of a ceramic teapot on a wooden table." \
+  --output-dir ./outputs/u0-teapot \
+  --seed 42 \
+  --max-new-tokens 4169
+```
+
+Set the FlashInfer workspace to 512 MiB for full-sequence planning. The default 128 MiB workspace is too small for this configuration. Include this workspace in the GPU memory budget alongside weights and KV caches.
+
+Choose a new or empty output directory so a failed run cannot be mistaken for an older result. A completed run writes:
+
+| File | Contents |
+| --- | --- |
+| `image.png` | The decoded 1024 × 1024 image |
+| `generated_ids.npy` | Generated token IDs, without the prompt |
+| `generation.json` | Prompt, seed, backend, stop reason, image size, and timings |
+| `input_ids.npy`, `unconditional_ids.npy` | Conditional and no-text prompt tokens |
+| `tokenizer_mapping.json` | Dimension-header token mappings |
+
+The script finishes token generation and closes the AR engine before loading the image decoder. The two models therefore use GPU memory in separate stages.
+
+For a tokenizer-only check, omit the decoder path and add `--prepare-only`:
+
+```bash
+uv run --locked python examples/xiaomi_u0/run_xiaomi_u0.py \
+  --checkpoint-dir /path/to/Xiaomi-Robotics-U0-4B \
+  --prompt "A compact industrial inspection camera on a brushed steel workbench, precise studio lighting." \
+  --output-dir ./outputs/u0-prepare \
+  --prepare-only
+```
+
+## How inference is organized
+
+The `xiaomi_u0` entry loads the AR weights and creates the generation scheduler. The scheduler owns separate conditional and unconditional runners, each with its own KV cache. It applies CFG and sampling, and stops when it returns EOS or reaches the token limit. The final returned token is not forwarded through the model again.
+
+The `xiaomi_u0_decode` entry loads the codebook, post-quantization projection, and image decoder. It skips encoder tensors because text-to-image generation only needs decoding. The shared weight loader requires every decoder parameter and rejects unknown decoder keys.
+
+The utility package handles tokenization, token-stream checks, and conversion of decoded pixels to PNG. It does not perform model inference or import the main PhyAI package.
+
+## Generated examples
+
+These images were generated on Thor with seed 42, using FlashInfer and the native PhyAI decoder.
+
+### Ceramic teapot
+
+Prompt: A studio photograph of a ceramic teapot on a wooden table.
+
+![Ceramic teapot](/images/models/xiaomi-u0/teapot-native.png)
+
+### Inspection camera
+
+Prompt: A compact industrial inspection camera on a brushed steel workbench, precise studio lighting.
+
+![Inspection camera](/images/models/xiaomi-u0/camera-native.png)
+
+### Robotic gripper
+
+Prompt: A robotic gripper holding a small metal component on an assembly line, realistic industrial photography.
+
+![Robotic gripper](/images/models/xiaomi-u0/gripper-native.png)
+
+To reproduce the camera or gripper, use its prompt in the generation command above and choose a new `--output-dir`.
+
+## Scope and validation
+
+This example accepts one unpadded request on one GPU, uses no-text CFG at scale 3, and generates one fixed-size image. A complete stream has 4169 tokens: 4096 visual codes, 63 row separators, and image/sequence delimiters. CUDA Graph, concurrent requests, other resolutions, and video are outside its scope.
+
+The current path was validated on NVIDIA Thor with Torch 2.11.0 and CUDA 13.0:
+
+- FlashInfer AR: 81 predictions replayed the same fixed history, with 6279 activation comparisons passing the declared approximate tolerances. This was not an exact full-sequence comparison.
+- Native decoder: one retained code grid, 297 exact parameter hashes, and 15 selected boundaries passed `atol=1e-3, rtol=1e-4`. Final FP32 pixels also passed that elementwise tolerance and mean absolute error `<=1e-5`; the maximum 8-bit pixel difference was `<=1`, at 1024 × 1024 resolution.
+- Public CLI: each of the three prompts above completed free sampling through FlashInfer AR/CFG with seed 42 and the 512 MiB workspace. Each run returned EOS with a complete 4169-token stream and saved a native-decoded 1024 × 1024 RGB image. The conditional cache ends with ESS; the image-only unconditional cache ends with EOI. EOS is returned without another model forward.
+
+These checks cover the stated inputs and configuration. They do not establish broad prompt quality, other devices, or exact full-sequence FlashInfer parity. Earlier exact numerical results apply to the removed reference attention path.

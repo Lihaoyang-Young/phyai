@@ -10,14 +10,13 @@ dependencies = [
     "opencv-python-headless",
     "pillow",
     "qwen-vl-utils",
+    "tiktoken>=0.7,<1",
     "torch==2.11.0",
     "torchvision==0.26.0",
     "transformers==5.8.1",
 ]
 
 [project.optional-dependencies]
-# Local vocabulary encoding for the Xiaomi U0 inference example.
-xiaomi_u0 = ["tiktoken>=0.7,<1"]
 # fastokens accelerates phyai_utils_tools.tokenizer and processor utilities.
 fastokenizer = ["fastokens>=0.2.0"]
 

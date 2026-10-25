@@ -157,7 +157,7 @@ class UNISGenerationScheduler(Scheduler):
         *,
         capacity: int,
         tokenizer_mapping: dict[str, list[int]],
-        paged_backend: str = "torch_reference",
+        paged_backend: str = "flashinfer",
     ) -> None:
         """Validate header mappings and create runners for two independent CFG caches."""
         self.model = model

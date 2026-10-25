@@ -1,0 +1,90 @@
+---
+title: "Xiaomi U0 文生图"
+description: "准备本地权重，通过 PhyAI 运行 Xiaomi U0 并生成单张图像。"
+---
+
+这个示例使用 Xiaomi-Robotics-U0-4B，根据文本生成一组 64 × 64 的视觉码，再通过 Emu3.5 解码器得到 1024 × 1024 的 RGB 图像。
+
+两个模型都在 PhyAI 中运行。自回归模型使用 BF16 参数和 FlashInfer 分页注意力；图像解码器保持原权重的 FP32 精度，使用卷积、GroupNorm 和 PhyAI 注意力层提供的非因果 SDPA。加载过程只读取配置和权重，不执行权重目录中的 Python 文件。
+
+## 准备环境和权重
+
+你需要一张受仓库运行环境支持的 CUDA GPU，以及两个本地权重目录。安装时请保留仓库对 Torch、Transformers 和 FlashInfer 的版本约束。
+
+- Xiaomi-Robotics-U0-4B 目录需要包含模型权重、`config.json`、`unis.tiktoken` 和 `unis_vision_tokens.txt`。
+- [Emu3.5-VisionTokenizer](https://huggingface.co/BAAI/Emu3.5-VisionTokenizer) 目录需要包含配置和模型权重。
+
+在仓库根目录执行：
+
+```bash
+uv lock
+uv sync --locked
+```
+
+`tiktoken` 是 `phyai-utils-tools` 的普通依赖，不需要另选 extra。如果使用已配好的环境，先通过 `uv sync --locked --dry-run` 查看安装计划。
+
+## 生成图像
+
+先查看 GPU 是否有足够空闲显存，再将命令中的路径替换为你的权重目录：
+
+```bash
+nvidia-smi
+PHYAI_FLASHINFER_WORKSPACE_BYTES=536870912 \
+uv run --locked python examples/xiaomi_u0/run_xiaomi_u0.py \
+  --checkpoint-dir /path/to/Xiaomi-Robotics-U0-4B \
+  --vision-tokenizer-dir /path/to/Emu3.5-VisionTokenizer \
+  --prompt "A studio photograph of a ceramic teapot on a wooden table." \
+  --output-dir ./outputs/u0-teapot \
+  --seed 42 \
+  --max-new-tokens 4169
+```
+
+完整序列的规划需要将 FlashInfer 工作区设为 512 MiB；默认的 128 MiB 不足以运行这个配置。估算显存用量时，需要将工作区与权重、KV 缓存一并计算。
+
+请选择新目录或空目录，避免把上次留下的图片误认为本次结果。成功后，`image.png` 保存生成图像，`generated_ids.npy` 保存不含提示词的输出 token，`generation.json` 记录提示词、种子、后端、停止原因、尺寸和计时。目录中还会保留输入 token 与尺寸头映射。
+
+程序会先关闭自回归引擎，再通过 `xiaomi_u0_decode` 加载图像解码器，两个模型分阶段使用显存。如果只想检查文本分词，可以省略 `--vision-tokenizer-dir` 并加上 `--prepare-only`，其他参数保持不变。
+
+## 推理过程
+
+`xiaomi_u0` 插件负责加载自回归模型。调度器为有条件和无条件分支分别维护 KV 缓存，执行 CFG 和采样，直到返回 EOS 或达到长度上限。最后返回的 token 不会再送入模型计算一次。
+
+`xiaomi_u0_decode` 负责加载码本、量化后的投影层和图像解码器。文生图不需要图像编码器，因此会跳过编码器权重；解码器的必需参数仍须完整匹配，未知的解码器参数名会报错。
+
+工具包只处理文本分词、token 流检查和像素到 PNG 的转换，不执行模型推理，也不依赖主 PhyAI 包。
+
+## 生成样例
+
+以下图片在 Thor 上使用 FlashInfer 和 PhyAI 原生解码器生成，种子均为 42。
+
+### 陶瓷茶壶
+
+提示词：A studio photograph of a ceramic teapot on a wooden table.
+
+![陶瓷茶壶](/images/models/xiaomi-u0/teapot-native.png)
+
+### 工业相机
+
+提示词：A compact industrial inspection camera on a brushed steel workbench, precise studio lighting.
+
+![工业相机](/images/models/xiaomi-u0/camera-native.png)
+
+### 机械夹爪
+
+提示词：A robotic gripper holding a small metal component on an assembly line, realistic industrial photography.
+
+![机械夹爪](/images/models/xiaomi-u0/gripper-native.png)
+
+复现相机或夹爪样例时，将上面生成命令的 `--prompt` 替换为对应提示词，并使用新的 `--output-dir`。
+
+## 支持范围与验证
+
+当前示例只处理单 GPU、单条无填充请求，使用 CFG scale 3，生成固定大小的单张图像。完整输出为 4169 个 token，包含 4096 个视觉码、63 个换行分隔符及图像和序列标记。CUDA Graph、并发请求、其他分辨率和视频不在本示例范围内。
+
+当前实现在 NVIDIA Thor、Torch 2.11.0 和 CUDA 13.0 环境中完成了以下验证：
+
+- FlashInfer 自回归：固定相同历史，回放 81 次预测，6279 次激活比较通过预先声明的近似容差。这不是完整序列的精确数值对齐。
+- 原生解码器：对一组保留的视觉码，297 个参数哈希精确匹配，15 个选定节点通过 `atol=1e-3, rtol=1e-4`。最终 FP32 像素也通过同样的逐元素容差，平均绝对误差 `<=1e-5`；转为 8 位后最大像素差 `<=1`，尺寸为 1024 × 1024。
+- 公开 CLI：上面的三条提示词分别使用种子 42 和 512 MiB 工作区，经过 FlashInfer AR/CFG 自由采样，返回 EOS 和完整的 4169 个 token，再由原生解码器生成 1024 × 1024 RGB 图片。有条件分支缓存到 ESS，无条件图像分支缓存到 EOI；返回的 EOS 不再送入模型。
+
+这些结果适用于上述输入和配置，不能据此判断广泛提示词的图像质量、其他设备表现或完整序列的 FlashInfer 精确数值一致性。此前的精确对齐结果仍只适用于已移除的参考注意力实现。
